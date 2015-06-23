@@ -27,6 +27,19 @@ describe "PayPal", :js => true do
     end
   end
 
+  def add_to_cart(product)
+    visit spree.root_path
+    click_link product.name
+    click_button 'Add To Cart'
+  end
+
+  def fill_in_guest
+    within("#guest_checkout") do
+      fill_in "Email", :with => "test@example.com"
+      click_button 'Continue'
+    end
+  end  
+
   def switch_to_paypal_login
     # If you go through a payment once in the sandbox, it remembers your preferred setting.
     # It defaults to the *wrong* setting for the first time, so we need to have this method.
@@ -296,6 +309,79 @@ describe "PayPal", :js => true do
       page.should have_content("PayPal failed. Security header is not valid")
     end
   end
+
+  context "can process an order with VAT included prices" do
+    let(:tax_rate) { create(:tax_rate, name: 'VAT Tax', amount: 0.1,
+                            zone: Spree::Zone.last, included_in_price: true) }
+    let(:tax_category) { create(:tax_category, tax_rates: [tax_rate]) }
+    let(:product3) { FactoryGirl.create(:product, name: 'EU Charger', tax_category: tax_category) }
+    let(:tax_string) { "VAT Tax 10.0% (Included in Price)" }
+
+    # Regression test for #129
+    context "from countries where VAT is applied" do
+
+      before do
+        Spree::Zone.last.update_attribute(:default_tax, true)
+      end
+
+      specify do
+        add_to_cart(product3)
+        visit '/cart'
+
+        within("#cart_adjustments") do
+          page.should have_content(tax_string)
+        end
+
+        click_button 'Checkout'
+        fill_in_guest
+        fill_in_billing
+        click_button "Save and Continue"
+        click_button "Save and Continue"
+        find("#paypal_button").click
+
+        within_transaction_cart do
+          # included taxes should not go on paypal
+          page.should_not have_content(tax_string)
+        end
+
+        login_to_paypal
+        click_button "Pay Now"
+
+        page.should have_content("Your order has been processed successfully")
+      end
+    end
+
+    # Regression test for #17
+    context "from countries where VAT is refunded" do
+      # this is required, but we will not use this zone on this checkout
+      let!(:default_tax_zone) { create(:zone, default_tax: true) }
+
+      specify do
+        add_to_cart(product3)
+        click_button 'Checkout'
+        fill_in_guest
+        fill_in_billing
+        click_button "Save and Continue"
+
+        within("#checkout-summary") do
+          page.should have_content("Refund #{tax_string}")
+        end
+
+        click_button "Save and Continue"
+        find("#paypal_button").click
+
+        within_transaction_cart do
+          # included taxes should not reach paypal
+          page.should have_content(tax_string)
+        end
+
+        login_to_paypal
+        click_button "Pay Now"
+
+        page.should have_content("Your order has been processed successfully")
+      end
+    end
+  end  
 
   context "as an admin" do
     stub_authorization!
