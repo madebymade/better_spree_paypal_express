@@ -49,7 +49,10 @@ module Spree
         }
       })
 
+      pp_request = inject_shipping_address(pp_request)
+
       pp_response = provider.do_express_checkout_payment(pp_request)
+
       if pp_response.success?
         # We need to store the transaction id for the future.
         # This is mainly so we can use it later on to refund the payment if the user wishes.
@@ -98,6 +101,29 @@ module Spree
         )
       end
       refund_transaction_response
+    end
+
+    private
+
+    def inject_shipping_address(pp_request)
+      paypal_addr = pp_request.DoExpressCheckoutPaymentRequestDetails.PaymentDetails.first.ShipToAddress
+
+      if paypal_addr.AddressID.nil?
+        order_id = pp_request.DoExpressCheckoutPaymentRequestDetails.PaymentDetails.first.InvoiceID
+        order = Spree::Order.find_by(number: order_id)
+        shipping_address = order.shipping_address
+
+        paypal_addr.Name = shipping_address.full_name
+        paypal_addr.Street1 = shipping_address.address1
+        paypal_addr.Street2 = shipping_address.address2
+        paypal_addr.CityName = shipping_address.city
+        paypal_addr.Phone = shipping_address.phone
+        paypal_addr.StateOrProvince = shipping_address.state_text
+        paypal_addr.Country = shipping_address.country.iso
+        paypal_addr.PostalCode = shipping_address.zipcode
+      end
+
+      pp_request
     end
   end
 end
